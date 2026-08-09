@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.DS_Store
+artifacts/
+rd-cache/
+config/rd-keys.json
+
+# Playwright
+test-results/
+playwright-report/

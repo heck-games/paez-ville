@@ -1,0 +1,22 @@
+{
+  "name": "paez-ville",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Paez Ville - GBA-era top-down RPG. Phase 1: bootable Phaser 4 + Vite scaffold.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "validate": "node scripts/validate.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "playwright": "^1.62.1",
+    "vite": "^6.0.0"
+  },
+  "dependencies": {
+    "phaser": "^4.2.1",
+    "phaser4-rex-plugins": "^4.2.0"
+  }
+}
