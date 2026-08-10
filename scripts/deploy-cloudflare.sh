@@ -11,10 +11,7 @@ cd "$ROOT"
 npm run build
 
 # Stamp asset URLs with current commit so browser caches are busted
-SHA=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || date +%s)
-sed -i '' "s/assets\/index-/assets\/index-$SHA-/g" "$DIST/index.html" || true
-# actually Vite handles cache busting by putting hashes in filenames, so this is just extra safety, or we don't need it.
-# Alberdi didn't use Vite, so it needed manual cache busting. Vite does it for us.
+# Vite automatically generates content-hashed filenames in dist/ (e.g. index-DGsbhirc.js) for cache busting.
 
 echo "==> Deploying to Pages project '$PROJECT'"
 env -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" \

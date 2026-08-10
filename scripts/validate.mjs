@@ -153,6 +153,13 @@ const exit = (code) => process.exit(code);
     await page.waitForTimeout(300);
     const map4 = await page.evaluate(() => window.__PAEZ.currentMapKey());
 
+    // 9. Phase 8: Save system validation (localStorage)
+    await page.evaluate(() => window.__PAEZ.saveGame({ mapKey: 'cerveceria', playerX: 140, playerY: 90, bossDefeated: true }));
+    const saveExists = await page.evaluate(() => window.__PAEZ.hasSave());
+    const loaded = await page.evaluate(() => window.__PAEZ.loadGame());
+    await page.evaluate(() => window.__PAEZ.clearSave());
+    const saveCleared = !await page.evaluate(() => window.__PAEZ.hasSave());
+
     // Report
     console.log('\n── Validation Report ──');
     console.log(`  canvas:            ✓ present`);
@@ -167,7 +174,8 @@ const exit = (code) => process.exit(code);
     console.log(`  staff combat:      initial=${initialDogs} spawned=${spawnedDogs} afterHit=${dogsAfterAttack} (despawned 1)`);
     console.log(`  turn battle start: ${isBattle1 ? '✓ true' : '✗ false'} (boss HP=${bossHpStart})`);
     console.log(`  turn battle won:   ${!isBattle2 ? '✓ returned to world' : '✗ false'}`);
-    console.log(`  3-location maps:   ${map1} → ${map2} → ${map3} → ${map4} (✓ all 3 locations working)\n`);
+    console.log(`  3-location maps:   ${map1} → ${map2} → ${map3} → ${map4} (✓ all 3 locations working)`);
+    console.log(`  save system:       saveExists=${saveExists} loadedMap=${loaded?.mapKey} bossDefeated=${loaded?.bossDefeated} cleared=${saveCleared} (✓ Phase 8 working)\n`);
 
     const failures = [];
     if (errors.length) failures.push(`${errors.length} console error(s):\n    ` + errors.slice(0, 5).join('\n    '));
@@ -183,6 +191,9 @@ const exit = (code) => process.exit(code);
     if (isBattle2) failures.push('turn-based battle failed to complete and return to world');
     if (map1 !== 'isla' || map2 !== 'cerveceria' || map3 !== 'cancha' || map4 !== 'isla') {
       failures.push(`multi-map transition failed: got sequence [${map1}, ${map2}, ${map3}, ${map4}]`);
+    }
+    if (!saveExists || loaded?.mapKey !== 'cerveceria' || !loaded?.bossDefeated || !saveCleared) {
+      failures.push(`save system test failed (saveExists=${saveExists}, map=${loaded?.mapKey}, bossDefeated=${loaded?.bossDefeated}, cleared=${saveCleared})`);
     }
 
     if (failures.length) {

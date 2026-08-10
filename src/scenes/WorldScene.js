@@ -207,6 +207,10 @@ export default class WorldScene extends Phaser.Scene {
         const idx = cmd === 'Attack' ? 0 : cmd === 'Item' ? 1 : 2;
         window.__PAEZ_BATTLE.selectOption(idx);
       },
+      saveGame: (state) => saveGame(state || { mapKey: this.currentMapKey, playerX: this.player.x, playerY: this.player.y }),
+      loadGame: () => loadGame(),
+      hasSave: () => loadGame() !== null,
+      clearSave: () => clearSave(),
     };
   }
 
