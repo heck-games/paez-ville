@@ -36,7 +36,7 @@ import rd_keys  # noqa: E402
 API = "https://api.retrodiffusion.ai/v1/inferences"
 ROOT = Path(__file__).resolve().parents[1]
 CACHE_DIR = ROOT / "rd-cache"
-SPRITES_DIR = ROOT / "assets" / "sprites"
+SPRITES_DIR = ROOT / "public" / "assets" / "sprites"
 
 # Top-down RPG style tail — replaces Alberdi's beat-em-up
 # ("Gritty 90s beat-em-up street style, side view facing right...").

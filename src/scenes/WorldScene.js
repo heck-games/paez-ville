@@ -1,68 +1,146 @@
 import Phaser from 'phaser';
 import VirtualJoyStick from 'phaser4-rex-plugins/plugins/virtualjoystick.js';
+import {
+  initDialogue,
+  showDialogue,
+  isDialogueActive,
+  updateDialogue,
+  advanceDialogue,
+} from '../../js/dialogue.js';
+import { saveGame, loadGame, clearSave } from '../../js/save.js';
 
 // WorldScene - the walkable "Isla de los Patos" map.
-//
-// Responsibilities: build the tilemap from the loaded Tiled JSON + the
-// procedural tileset texture, spawn the player, wire up keyboard/WASD/touch
-// movement, set collision against tree/water tiles, and have the camera
-// follow the player within the map bounds.
 const PLAYER_SPEED = 80; // px/sec, tuned for the 240x160 base resolution
-const PLAYER_SIZE = 32; // Phase 1 placeholder rect (real sprite = Phase 3)
+const PLAYER_SIZE = 16; // 16x16 sprite size for GBA resolution
+
+const DON_TITO_DIALOGUE = [
+  {
+    speaker: 'don Tito',
+    text: '¡Buenas mijo! Mirá qué linda está la Isla de los Patos hoy.',
+    colHex: '#5fae44',
+    portraitCol: [95, 174, 68],
+    voice: 'npc_mid',
+  },
+  {
+    speaker: 'don Tito',
+    text: 'Fue inaugurada el 21 de agosto de 1991. Soltaron cientos de patos al río Suquía.',
+    colHex: '#5fae44',
+    portraitCol: [95, 174, 68],
+    voice: 'npc_mid',
+  },
+  {
+    speaker: 'don Tito',
+    text: 'Villa Páez nació en los años \'20 al lado del río Suquía, por la familia Páez.',
+    colHex: '#5fae44',
+    portraitCol: [95, 174, 68],
+    voice: 'npc_mid',
+  },
+  {
+    speaker: 'don Tito',
+    text: 'En la antigua Cervecería Córdoba hay ruido... alguien tendría que ir a mirar.',
+    colHex: '#5fae44',
+    portraitCol: [95, 174, 68],
+    voice: 'npc_mid',
+  },
+];
 
 export default class WorldScene extends Phaser.Scene {
   constructor() {
     super('World');
   }
 
+  init(data) {
+    const saved = loadGame();
+    if (data && data.mapKey) {
+      this.currentMapKey = data.mapKey;
+      this.savedSpawnX = data.spawnX;
+      this.savedSpawnY = data.spawnY;
+    } else if (saved) {
+      this.currentMapKey = saved.mapKey || 'isla';
+      this.savedSpawnX = saved.playerX;
+      this.savedSpawnY = saved.playerY;
+    } else {
+      this.currentMapKey = 'isla';
+      this.savedSpawnX = null;
+      this.savedSpawnY = null;
+    }
+    this.bossDefeated = (data && data.bossDefeated) || (saved && saved.bossDefeated) || false;
+  }
+
   create() {
     // --- Tilemap ------------------------------------------------------
-    const map = this.make.tilemap({ key: 'isla' });
-    // The tileset "name" inside isla.json is "isla_tileset"; we link it to
-    // the Phaser texture key loaded in BootScene (also "isla_tileset").
-    // Passing an explicit texture key means Phaser never needs the PNG file
-    // path recorded in the Tiled JSON - the procedural data-URI image
-    // stands in for it.
+    const map = this.make.tilemap({ key: this.currentMapKey });
     const tileset = map.addTilesetImage('isla_tileset', 'isla_tileset');
     const layer = map.createLayer('Tile Layer 1', tileset, 0, 0);
 
-    // Local tile ids 2 (tree) and 3 (water) are marked collides:true in
-    // isla.json's tileset "tiles" properties.
     layer.setCollisionByProperty({ collides: true });
 
     // --- Player ---------------------------------------------------------
-    // No sprite art yet (Phase 3): a plain colored rectangle texture,
-    // generated once here and reused as the player's physics body.
-    this.makePlayerTexture();
+    this.createPlayerAnimations();
 
     const spawnX = map.widthInPixels / 2;
     const spawnY = map.heightInPixels / 2;
-    this.player = this.physics.add.sprite(spawnX, spawnY, 'player_rect');
+
+    this.player = this.physics.add.sprite(spawnX, spawnY, 'player', 0);
     this.player.setCollideWorldBounds(true);
-    this.player.body.setSize(PLAYER_SIZE, PLAYER_SIZE);
+    this.player.body.setSize(16, 16);
+    this.player.body.setOffset(8, 16); // feet box
 
-    // Small facing-direction marker: a tiny square offset from center in
-    // the direction the player last moved. Updated in update().
-    this.facingMarker = this.add.rectangle(spawnX, spawnY, 6, 6, 0xffe066);
-    this.facingDir = { x: 0, y: 1 }; // default: facing down
-
+    this.facingDir = { x: 0, y: 1 };
     this.physics.add.collider(this.player, layer);
+
+    // --- NPC: don Tito ------------------------------------------------
+    this.makeNPCTexture();
+    const titoObj = map.findObject('POIs', (obj) => obj.name === 'vecino_bench');
+    const titoX = titoObj ? titoObj.x : 96;
+    const titoY = titoObj ? titoObj.y : 96;
+
+    this.donTito = this.physics.add.sprite(titoX, titoY, 'npc_rect');
+    this.donTito.setImmovable(true);
+    this.physics.add.collider(this.player, this.donTito);
+
+    // Label for NPC
+    this.donTitoLabel = this.add.text(titoX, titoY - 12, 'don Tito', {
+      fontFamily: 'monospace',
+      fontSize: '8px',
+      color: '#ffffff',
+    }).setOrigin(0.5);
+
+    // --- Trash Enemies (Stray Dogs / Perros Callejeros) ---------------
+    this.trashEnemies = this.physics.add.group();
+    this.createDogAnimations();
+    
+    // Spawn initial trash dogs near duck spawn POI
+    const duckObj = map.findObject('POIs', (obj) => obj.name === 'duck_spawn');
+    const dogX = duckObj ? duckObj.x : 160;
+    const dogY = duckObj ? duckObj.y : 160;
+    this.spawnTrashEnemy(dogX, dogY);
+    this.spawnTrashEnemy(dogX + 24, dogY + 16);
+
+    this.physics.add.collider(this.player, this.trashEnemies);
+    this.physics.add.collider(this.trashEnemies, layer);
+
+    // --- Exit POIs for Map Transitions --------------------------------
+    this.exitObjects = map.filterObjects('POIs', (obj) => obj.type === 'exit') || [];
 
     // --- Camera -----------------------------------------------------
     this.cameras.main.startFollow(this.player, true);
     this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
     this.physics.world.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
 
-    // --- Input: keyboard + WASD ---------------------------------------
+    // --- Input -------------------------------------------------------
     this.cursors = this.input.keyboard.createCursorKeys();
     this.wasd = this.input.keyboard.addKeys({
       up: Phaser.Input.Keyboard.KeyCodes.W,
       down: Phaser.Input.Keyboard.KeyCodes.S,
       left: Phaser.Input.Keyboard.KeyCodes.A,
       right: Phaser.Input.Keyboard.KeyCodes.D,
+      interact: Phaser.Input.Keyboard.KeyCodes.E,
+      attackK: Phaser.Input.Keyboard.KeyCodes.K,
+      attackJ: Phaser.Input.Keyboard.KeyCodes.J,
     });
 
-    // --- Input: touch virtual joystick (touch devices only) -----------
+    // Touch joystick
     this.joystickCursors = null;
     if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) {
       const joystick = new VirtualJoyStick(this, {
@@ -72,39 +150,185 @@ export default class WorldScene extends Phaser.Scene {
         base: this.add.circle(0, 0, 24, 0x888888, 0.4),
         thumb: this.add.circle(0, 0, 12, 0xcccccc, 0.7),
       });
-      // Keep the joystick UI fixed on screen and above world geometry.
       joystick.base.setScrollFactor(0).setDepth(1000);
       joystick.thumb.setScrollFactor(0).setDepth(1001);
       this.joystickCursors = joystick.createCursorKeys();
     }
 
-    // --- Debug hook for scripts/validate.mjs ---------------------------
+    // --- Dialogue System ---------------------------------------------
+    initDialogue(this);
+
+    // Interaction key (E)
+    this.input.keyboard.on('keydown-E', () => {
+      if (!isDialogueActive()) this.checkInteraction();
+    });
+
+    // Attack keys (K, J, Space when close to enemy / not in dialogue)
+    this.input.keyboard.on('keydown-K', () => {
+      if (!isDialogueActive()) this.attackWithStaff();
+    });
+    this.input.keyboard.on('keydown-J', () => {
+      if (!isDialogueActive()) this.attackWithStaff();
+    });
+    this.input.keyboard.on('keydown-SPACE', () => {
+      if (isDialogueActive()) return;
+      // If near don Tito, talk; otherwise attack with staff!
+      const distTito = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.donTito.x, this.donTito.y);
+      if (distTito < 32) {
+        this.checkInteraction();
+      } else {
+        this.attackWithStaff();
+      }
+    });
+
+    // --- Debug Hook for Playwright Validation ------------------------
     window.__PAEZ = {
       player: () => ({ x: this.player.x, y: this.player.y }),
       scene: () => this,
+      triggerDialogue: (lines) => showDialogue(lines || DON_TITO_DIALOGUE),
+      advanceDialogue: () => advanceDialogue(),
+      isDialogueActive: () => isDialogueActive(),
+      spawnTrashEnemy: (x, y) => this.spawnTrashEnemy(x, y),
+      trashEnemiesCount: () => this.trashEnemies.countActive(true),
+      attack: () => this.attackWithStaff(),
+      currentMapKey: () => this.currentMapKey,
+      switchMap: (key) => this.scene.restart({ mapKey: key }),
+      triggerBossBattle: (onWin) => {
+        this.scene.start('Battle', {
+          bossName: 'El Cervecero',
+          bossHp: 100,
+          onWin: onWin || null,
+        });
+      },
+      isInBattle: () => this.scene.isActive('Battle'),
+      getBossHp: () => (window.__PAEZ_BATTLE ? window.__PAEZ_BATTLE.getBossHp() : null),
+      battleCommand: (cmd) => {
+        if (!window.__PAEZ_BATTLE) return;
+        const idx = cmd === 'Attack' ? 0 : cmd === 'Item' ? 1 : 2;
+        window.__PAEZ_BATTLE.selectOption(idx);
+      },
     };
   }
 
-  // Draws a simple 32x32 colored rectangle and registers it as a texture
-  // so it can be used like any loaded sprite sheet.
-  makePlayerTexture() {
-    if (this.textures.exists('player_rect')) return;
+  createDogAnimations() {
+    if (this.anims.exists('dog_idle')) return;
+    this.anims.create({
+      key: 'dog_idle',
+      frames: this.anims.generateFrameNumbers('trash_perro', { start: 0, end: 3 }),
+      frameRate: 6,
+      repeat: -1,
+    });
+  }
 
+  spawnTrashEnemy(x, y) {
+    const dog = this.physics.add.sprite(x, y, 'trash_perro', 0);
+    dog.setCollideWorldBounds(true);
+    dog.body.setSize(16, 16);
+    dog.body.setOffset(8, 16);
+    dog.play('dog_idle');
+    this.trashEnemies.add(dog);
+    return dog;
+  }
+
+  attackWithStaff() {
+    // 1. Staff swing visual arc in front of player
+    const attackX = this.player.x + this.facingDir.x * 18;
+    const attackY = this.player.y + this.facingDir.y * 18;
+
+    const arc = this.add.graphics();
+    arc.lineStyle(2, 0xffe066, 1);
+    arc.fillStyle(0xffe066, 0.4);
+    arc.fillCircle(attackX, attackY, 14);
+    arc.strokeCircle(attackX, attackY, 14);
+
+    this.time.delayedCall(120, () => {
+      arc.destroy();
+    });
+
+    // 2. Check overlap against trash enemies (Zelda register: 1 hit despawns)
+    const hitRadius = 22;
+    this.trashEnemies.getChildren().forEach((enemy) => {
+      if (!enemy.active) return;
+      const dist = Phaser.Math.Distance.Between(attackX, attackY, enemy.x, enemy.y);
+      if (dist <= hitRadius) {
+        // Hit effect: quick flash & despawn
+        this.tweens.add({
+          targets: enemy,
+          alpha: 0,
+          scale: 1.3,
+          duration: 100,
+          onComplete: () => {
+            enemy.destroy();
+          },
+        });
+      }
+    });
+  }
+
+  createPlayerAnimations() {
+    if (this.anims.exists('walk_down')) return;
+
+    this.anims.create({
+      key: 'walk_down',
+      frames: this.anims.generateFrameNumbers('player', { start: 0, end: 3 }),
+      frameRate: 8,
+      repeat: -1,
+    });
+    this.anims.create({
+      key: 'walk_left',
+      frames: this.anims.generateFrameNumbers('player', { start: 4, end: 7 }),
+      frameRate: 8,
+      repeat: -1,
+    });
+    this.anims.create({
+      key: 'walk_right',
+      frames: this.anims.generateFrameNumbers('player', { start: 8, end: 11 }),
+      frameRate: 8,
+      repeat: -1,
+    });
+    this.anims.create({
+      key: 'walk_up',
+      frames: this.anims.generateFrameNumbers('player', { start: 12, end: 15 }),
+      frameRate: 8,
+      repeat: -1,
+    });
+  }
+
+  makeNPCTexture() {
+    if (this.textures.exists('npc_rect')) return;
     const g = this.make.graphics({ x: 0, y: 0 }, false);
-    g.fillStyle(0xe85d5d, 1);
-    g.fillRect(0, 0, PLAYER_SIZE, PLAYER_SIZE);
-    g.lineStyle(2, 0x8f2d2d, 1);
-    g.strokeRect(1, 1, PLAYER_SIZE - 2, PLAYER_SIZE - 2);
-    g.generateTexture('player_rect', PLAYER_SIZE, PLAYER_SIZE);
+    g.fillStyle(0x5fae44, 1);
+    g.fillRect(0, 0, 16, 16);
+    g.lineStyle(1, 0x386d27, 1);
+    g.strokeRect(0, 0, 16, 16);
+    g.generateTexture('npc_rect', 16, 16);
     g.destroy();
   }
 
-  update() {
+  checkInteraction() {
+    if (isDialogueActive()) return;
+    const dist = Phaser.Math.Distance.Between(
+      this.player.x,
+      this.player.y,
+      this.donTito.x,
+      this.donTito.y
+    );
+    if (dist < 32) {
+      showDialogue(DON_TITO_DIALOGUE);
+    }
+  }
+
+  update(time, delta) {
+    updateDialogue(delta);
+
     const body = this.player.body;
     body.setVelocity(0);
 
-    // Merge keyboard, WASD and (if present) the touch joystick into a
-    // single set of 4-directional booleans.
+    if (isDialogueActive()) {
+      this.player.anims.stop();
+      return;
+    }
+
     const left = this.cursors.left.isDown || this.wasd.left.isDown
       || (this.joystickCursors && this.joystickCursors.left.isDown);
     const right = this.cursors.right.isDown || this.wasd.right.isDown
@@ -122,20 +346,38 @@ export default class WorldScene extends Phaser.Scene {
     if (down) vy += 1;
 
     if (vx !== 0 || vy !== 0) {
-      // Normalize so diagonal movement isn't faster than cardinal movement.
       const len = Math.sqrt(vx * vx + vy * vy);
       vx /= len;
       vy /= len;
       body.setVelocity(vx * PLAYER_SPEED, vy * PLAYER_SPEED);
       this.facingDir = { x: vx, y: vy };
+
+      if (Math.abs(vx) > Math.abs(vy)) {
+        if (vx < 0) this.player.anims.play('walk_left', true);
+        else this.player.anims.play('walk_right', true);
+      } else {
+        if (vy < 0) this.player.anims.play('walk_up', true);
+        else this.player.anims.play('walk_down', true);
+      }
+    } else {
+      this.player.anims.stop();
     }
 
-    // Keep the facing marker glued just outside the player's edge in the
-    // last-moved direction, as a cheap stand-in for a directional sprite.
-    const offset = PLAYER_SIZE / 2 + 4;
-    this.facingMarker.setPosition(
-      this.player.x + this.facingDir.x * offset,
-      this.player.y + this.facingDir.y * offset,
-    );
+    // Check map exits
+    if (this.exitObjects) {
+      for (const exitObj of this.exitObjects) {
+        const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, exitObj.x, exitObj.y);
+        if (dist < 20) {
+          const targetProp = exitObj.properties ? exitObj.properties.find((p) => p.name === 'target') : null;
+          const targetMap = targetProp ? targetProp.value : null;
+          if (targetMap && targetMap !== this.currentMapKey) {
+            this.scene.restart({ mapKey: targetMap });
+            break;
+          }
+        }
+      }
+    }
   }
 }
+
+

@@ -10,7 +10,7 @@
 // Run: npm run validate   (after `npm run build`)
 // Env: PV_VALIDATE_URL to point at a running server instead of preview.
 import { chromium } from 'playwright';
-import { spawn } from 'node:child_process';
+import { spawn, execSync } from 'node:child_process';
 
 const PORT = 4173; // vite preview default
 const BASE = process.env.PV_VALIDATE_URL || `http://localhost:${PORT}/`;
@@ -18,9 +18,11 @@ const BASE = process.env.PV_VALIDATE_URL || `http://localhost:${PORT}/`;
 /** Start `vite preview` and resolve once it prints the "Local:" line. */
 function startPreview() {
   return new Promise((resolve, reject) => {
-    // detached:true + kill(-pid) later so we reap the whole process group,
-    // not just the npx wrapper (the real vite node child otherwise lingers
-    // and holds the port for the next run).
+    // Kill anything holding PORT before starting
+    try {
+      execSync(`/usr/sbin/lsof -ti:${PORT} | xargs kill -9 2>/dev/null || true`);
+    } catch { /* ignore */ }
+
     const child = spawn('node', ['node_modules/vite/bin/vite.js', 'preview', '--port', String(PORT), '--strictPort'], {
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
@@ -98,29 +100,94 @@ const exit = (code) => process.exit(code);
     const dx = after.x - before.x;
     const dy = after.y - before.y;
 
+    // 5. Phase 2: Dialogue validation
+    await page.evaluate(() => window.__PAEZ.triggerDialogue());
+    const isDlg1 = await page.evaluate(() => window.__PAEZ.isDialogueActive());
+    
+    // Advance lines until dialogue completes (typewriter reveal + line next)
+    for (let i = 0; i < 10; i++) {
+      if (!(await page.evaluate(() => window.__PAEZ.isDialogueActive()))) break;
+      await page.evaluate(() => window.__PAEZ.advanceDialogue());
+      await page.waitForTimeout(50);
+    }
+    const isDlg2 = await page.evaluate(() => window.__PAEZ.isDialogueActive());
+
+    // 6. Phase 4: Staff combat (Zelda register)
+    const pCurrent = await page.evaluate(() => window.__PAEZ.player());
+    const initialDogs = await page.evaluate(() => window.__PAEZ.trashEnemiesCount());
+    await page.evaluate(({ x, y }) => window.__PAEZ.spawnTrashEnemy(x + 16, y), pCurrent); // spawn directly in front
+    const spawnedDogs = await page.evaluate(() => window.__PAEZ.trashEnemiesCount());
+    
+    await page.evaluate(() => window.__PAEZ.attack()); // swing staff
+    await page.waitForTimeout(250);
+    const dogsAfterAttack = await page.evaluate(() => window.__PAEZ.trashEnemiesCount());
+    const isDlgInCombat = await page.evaluate(() => window.__PAEZ.isDialogueActive());
+
+    // 7. Phase 5: Turn-based combat (FF/Pokémon register)
+    await page.evaluate(() => window.__PAEZ.triggerBossBattle());
+    await page.waitForTimeout(200);
+    const isBattle1 = await page.evaluate(() => window.__PAEZ.isInBattle());
+    const bossHpStart = await page.evaluate(() => window.__PAEZ.getBossHp());
+
+    // Execute attacks until boss is defeated
+    for (let i = 0; i < 5; i++) {
+      if (!(await page.evaluate(() => window.__PAEZ.isInBattle()))) break;
+      await page.evaluate(() => window.__PAEZ.battleCommand('Attack'));
+      await page.waitForTimeout(600);
+    }
+
+    await page.waitForTimeout(1200); // victory animation transition back
+    const isBattle2 = await page.evaluate(() => window.__PAEZ.isInBattle());
+
+    // 8. Phase 6: Multi-map transitions (3 locations: isla, cerveceria, cancha)
+    const map1 = await page.evaluate(() => window.__PAEZ.currentMapKey());
+    await page.evaluate(() => window.__PAEZ.switchMap('cerveceria'));
+    await page.waitForTimeout(300);
+    const map2 = await page.evaluate(() => window.__PAEZ.currentMapKey());
+
+    await page.evaluate(() => window.__PAEZ.switchMap('cancha'));
+    await page.waitForTimeout(300);
+    const map3 = await page.evaluate(() => window.__PAEZ.currentMapKey());
+
+    await page.evaluate(() => window.__PAEZ.switchMap('isla'));
+    await page.waitForTimeout(300);
+    const map4 = await page.evaluate(() => window.__PAEZ.currentMapKey());
+
     // Report
-    console.log('\n── Phase 1 validation ──');
-    console.log(`  canvas:        ✓ present`);
-    console.log(`  console errors: ${errors.length}`);
-    console.log(`  page errors:   ${pageErrors.length}`);
-    console.log(`  __PAEZ hook:   ✓ present`);
-    console.log(`  player before: (${before.x.toFixed(1)}, ${before.y.toFixed(1)})`);
-    console.log(`  player after:  (${after.x.toFixed(1)}, ${after.y.toFixed(1)})`);
-    console.log(`  movement (Δx): ${dx.toFixed(1)} px\n`);
+    console.log('\n── Validation Report ──');
+    console.log(`  canvas:            ✓ present`);
+    console.log(`  console errors:     ${errors.length}`);
+    console.log(`  page errors:       ${pageErrors.length}`);
+    console.log(`  __PAEZ hook:       ✓ present`);
+    console.log(`  player before:     (${before.x.toFixed(1)}, ${before.y.toFixed(1)})`);
+    console.log(`  player after:      (${after.x.toFixed(1)}, ${after.y.toFixed(1)})`);
+    console.log(`  movement (Δx):     ${dx.toFixed(1)} px`);
+    console.log(`  dialogue triggered: ${isDlg1 ? '✓ true' : '✗ false'}`);
+    console.log(`  dialogue closed:    ${!isDlg2 ? '✓ true' : '✗ false'}`);
+    console.log(`  staff combat:      initial=${initialDogs} spawned=${spawnedDogs} afterHit=${dogsAfterAttack} (despawned 1)`);
+    console.log(`  turn battle start: ${isBattle1 ? '✓ true' : '✗ false'} (boss HP=${bossHpStart})`);
+    console.log(`  turn battle won:   ${!isBattle2 ? '✓ returned to world' : '✗ false'}`);
+    console.log(`  3-location maps:   ${map1} → ${map2} → ${map3} → ${map4} (✓ all 3 locations working)\n`);
 
     const failures = [];
     if (errors.length) failures.push(`${errors.length} console error(s):\n    ` + errors.slice(0, 5).join('\n    '));
     if (pageErrors.length) failures.push(`${pageErrors.length} page error(s):\n    ` + pageErrors.slice(0, 5).join('\n    '));
-    // Moving right for 250ms at 80px/s should net a clearly positive Δx. Use a
-    // loose floor so we catch "didn't move at all" without being brittle.
     if (Math.abs(dx) < 5 && Math.abs(dy) < 5) {
       failures.push(`player did not move on keypress (Δx=${dx.toFixed(1)}, Δy=${dy.toFixed(1)})`);
     }
+    if (!isDlg1) failures.push('dialogue system failed to activate on trigger');
+    if (isDlg2) failures.push('dialogue system failed to close after completing lines');
+    if (dogsAfterAttack >= spawnedDogs) failures.push(`staff attack failed to despawn enemy (before=${spawnedDogs}, after=${dogsAfterAttack})`);
+    if (isDlgInCombat) failures.push('staff attack unexpectedly opened battle UI');
+    if (!isBattle1) failures.push('turn-based battle failed to start');
+    if (isBattle2) failures.push('turn-based battle failed to complete and return to world');
+    if (map1 !== 'isla' || map2 !== 'cerveceria' || map3 !== 'cancha' || map4 !== 'isla') {
+      failures.push(`multi-map transition failed: got sequence [${map1}, ${map2}, ${map3}, ${map4}]`);
+    }
 
     if (failures.length) {
-      console.error('✗ Phase 1 validation FAILED:');
+      console.error('✗ Validation FAILED:');
       for (const f of failures) console.error('  - ' + f);
-      // screenshot for the record
       try {
         await page.screenshot({ path: 'artifacts/validate-fail.png', fullPage: true });
         console.error('  (screenshot: artifacts/validate-fail.png)');
@@ -128,8 +195,7 @@ const exit = (code) => process.exit(code);
       exit(1);
     }
 
-    console.log('✓ Phase 1 validation PASSED');
-    // Always capture a passing screenshot for the visual trail (per-iter diff).
+    console.log('✓ Phase 1 & 2 validation PASSED');
     try {
       await page.screenshot({ path: 'artifacts/validate-pass.png', fullPage: true });
       console.log('  (screenshot: artifacts/validate-pass.png)');
@@ -146,3 +212,4 @@ const exit = (code) => process.exit(code);
     if (server) stopPreview(server);
   }
 })();
+

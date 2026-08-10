@@ -5,6 +5,7 @@
 import Phaser from 'phaser';
 import BootScene from './scenes/BootScene.js';
 import WorldScene from './scenes/WorldScene.js';
+import BattleScene from './scenes/BattleScene.js';
 
 const config = {
   type: Phaser.AUTO,
@@ -23,7 +24,7 @@ const config = {
       debug: false,
     },
   },
-  scene: [BootScene, WorldScene],
+  scene: [BootScene, WorldScene, BattleScene],
 };
 
 // eslint-disable-next-line no-new
