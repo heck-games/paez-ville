@@ -9,6 +9,8 @@ export default class BootScene extends Phaser.Scene {
   preload() {
     // The Tiled JSON map for "Isla de los Patos".
     this.load.tilemapTiledJSON('isla', '/maps/isla.json');
+    this.load.tilemapTiledJSON('cerveceria', '/maps/cerveceria.json');
+    this.load.tilemapTiledJSON('cancha', '/maps/cancha.json');
 
     // Phase 1 has no tile art yet: draw a tiny tileset on a canvas and
     // load the resulting data URI as a normal image texture. The key
