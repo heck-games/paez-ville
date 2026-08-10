@@ -352,12 +352,20 @@ export default class Dialogue {
   selectChoice() {
     const choice = this.choices[this.selectedChoiceIdx];
     this.clearChoiceObjects();
+    this.choices = [];
 
-    if (typeof choice.next === 'function') {
-      choice.next();
-    } else if (typeof choice.next === 'string') {
-      // Custom event trigger, let the scene handle it
-      this.scene.events.emit('dialogue_choice', choice.next);
+    // Close the current box before branching so nested show() is clean,
+    // and so isActive() is false between branches (Playwright gates).
+    const next = choice && choice.next;
+    this.active = false;
+    this.container.setVisible(false);
+    // Don't fire onComplete on a branch mid-conversation.
+    this.onComplete = null;
+
+    if (typeof next === 'function') {
+      next();
+    } else if (typeof next === 'string') {
+      this.scene.events.emit('dialogue_choice', next);
     }
   }
 

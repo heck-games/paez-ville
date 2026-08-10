@@ -100,15 +100,18 @@ const exit = (code) => process.exit(code);
     const dx = after.x - before.x;
     const dy = after.y - before.y;
 
-    // 5. Phase 2: Dialogue validation
-    await page.evaluate(() => window.__PAEZ.triggerDialogue());
+    // 5. Phase 2: Dialogue validation (plain lines — no branch, so close is testable)
+    await page.evaluate(() => window.__PAEZ.triggerDialogue([
+      { speaker: 'Test', text: 'Línea uno de prueba.' },
+      { speaker: 'Test', text: 'Línea dos de prueba.' },
+    ]));
     const isDlg1 = await page.evaluate(() => window.__PAEZ.isDialogueActive());
     
     // Advance lines until dialogue completes (typewriter reveal + line next)
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 12; i++) {
       if (!(await page.evaluate(() => window.__PAEZ.isDialogueActive()))) break;
       await page.evaluate(() => window.__PAEZ.advanceDialogue());
-      await page.waitForTimeout(50);
+      await page.waitForTimeout(40);
     }
     const isDlg2 = await page.evaluate(() => window.__PAEZ.isDialogueActive());
 
@@ -124,8 +127,14 @@ const exit = (code) => process.exit(code);
     const isDlgInCombat = await page.evaluate(() => window.__PAEZ.isDialogueActive());
 
     // 7. Phase 5: Turn-based combat (FF/Pokémon register)
+    // Ensure dialogue is closed first (staff test must not leave UI open).
+    await page.evaluate(() => {
+      const s = window.__PAEZ.scene();
+      if (s && s.dialogue && s.dialogue.isActive()) s.dialogue.close();
+    });
     await page.evaluate(() => window.__PAEZ.triggerBossBattle());
-    await page.waitForTimeout(200);
+    // BattleScene starts after a ~220ms fade
+    await page.waitForTimeout(600);
     const isBattle1 = await page.evaluate(() => window.__PAEZ.isInBattle());
     const bossHpStart = await page.evaluate(() => window.__PAEZ.getBossHp());
 
@@ -136,21 +145,24 @@ const exit = (code) => process.exit(code);
       await page.waitForTimeout(600);
     }
 
-    await page.waitForTimeout(1200); // victory animation transition back
+    await page.waitForTimeout(2500); // victory animation + fade back to world
     const isBattle2 = await page.evaluate(() => window.__PAEZ.isInBattle());
 
     // 8. Phase 6: Multi-map transitions (3 locations: isla, cerveceria, cancha)
+    // Battle return may leave us on cerveceria — reset to isla first.
+    await page.evaluate(() => window.__PAEZ.switchMap('isla'));
+    await page.waitForTimeout(400);
     const map1 = await page.evaluate(() => window.__PAEZ.currentMapKey());
     await page.evaluate(() => window.__PAEZ.switchMap('cerveceria'));
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(400);
     const map2 = await page.evaluate(() => window.__PAEZ.currentMapKey());
 
     await page.evaluate(() => window.__PAEZ.switchMap('cancha'));
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(400);
     const map3 = await page.evaluate(() => window.__PAEZ.currentMapKey());
 
     await page.evaluate(() => window.__PAEZ.switchMap('isla'));
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(400);
     const map4 = await page.evaluate(() => window.__PAEZ.currentMapKey());
 
     // 9. Phase 8: Save system validation (localStorage)

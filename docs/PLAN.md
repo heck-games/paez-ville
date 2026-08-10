@@ -115,3 +115,159 @@ Persist: current map, player position, quest flags, dialogue-seen, defeated boss
 
 ### v0.1 tag
 All 8 phases green → tag `v0.1`. Story then rewritten freely.
+
+---
+
+## Post-mortem — what broke on 2026-08-09/10 (READ THIS FIRST)
+
+### What looked broken
+`https://paezville.heck.games` failed with `ERR_NAME_NOT_RESOLVED` / empty curl
+on some machines while `https://paezville.pages.dev` was fine and validated green.
+
+### What was actually going on
+1. **The game itself was green.** `npm run validate` against `pages.dev` passed all
+   8 phase gates (canvas, move, dialogue, staff, turn battle, 3 maps, save).
+2. **Custom domain WAS correctly attached** on the Pages project
+   (`status: active`, CNAME `paezville.heck.games → paezville.pages.dev` proxied).
+3. **Local DNS was poisoned.** Looking the name up *before* the DNS record existed
+   cached NXDOMAIN for the zone SOA MINIMUM (**1800s**). Layers that disagreed:
+   - authoritative / 1.1.1.1 / 8.8.8.8 → `172.64.80.1` ✅
+   - Rogers `64.71.255.204` → ✅
+   - Rogers `64.71.255.198` → NXDOMAIN ❌
+   - Tailscale MagicDNS `100.100.100.100` (forwards to system default) → NXDOMAIN ❌
+4. **`dig` lied about local reachability** (bypasses OS cache). Apps use
+   `getaddrinfo`. Skill: `dns-propagation-debug`.
+5. **Earlier false diagnosis:** empty `curl` body was a **local resolver failure**,
+   not an empty Pages deploy. Always pin:  
+   `curl --resolve paezville.heck.games:443:$(dig +short heck.games @1.1.1.1 | head -1) …`
+
+### Code bugs found while the domain distraction was happening
+These are real playability gaps the “v0.1 green” validation **did not catch**
+because the harness used `__PAEZ` hooks instead of walking the happy path:
+
+| Gap | Symptom | Fix |
+|---|---|---|
+| Boss never wired from Tiled | `type: boss` POI ignored; only hook could start battle | WorldScene spawns boss marker, proximity → taunt → Battle |
+| Battle returned without `bossDefeated` | Win didn’t stick; boss re-fought forever | BattleScene passes `bossDefeated: true` + return coords |
+| Save key split | `js/save.js` used `v1`, WorldScene inlined `v0.1` | Single canonical `js/save.js` key `paez_ville_save_v1` |
+| Exits at wall / wrong spawn | Restart dropped player on reverse exit → instant bounce | `MAP_SPAWNS` + exit debounce + centered exit hitbox |
+| Tile collision props missing on 2 maps | Walls not solid on cerveceria/cancha | tileset `collides` props on all 3 maps + gid fallback |
+| Ending trigger never fired | `finish_v01` POI unused | `checkEnding()` after boss win |
+| Deploy cache foot-gun | `_headers` had `immutable` on `/assets/*` (SPA poison) | `no-store` doc + `max-age=300 must-revalidate` assets + `?v=sha` stamp |
+| Absolute asset paths | `/assets/...` breaks under subpath | BootScene relative paths (`assets/...`, `maps/...`) |
+
+### Validation blind spots (fix the harness, not just the game)
+- Hook-driven tests ≠ player-driven path. Add a **happy-path walk** test:
+  isla → talk Tito → staff dog → exit → boss proximity → win → cancha ending.
+- Always validate **both** `pages.dev` and custom domain (pinned IP) after deploy.
+- Never judge deploy by one curl; multi-POP lag is 30–90s and nodes disagree.
+
+---
+
+## Landmines for the next agent (do not re-discover)
+
+1. **Name spelling:** Páez (`à`). Never "Paes". Game title is *Páez Ville*.
+2. **Real references mandatory** — `docs/REFERENCES.md` is the bible. Flavor free;
+   dates/places/brands must match column-1 facts.
+3. **Two combat registers stay separate.** Staff = no transition. Turn = world stops.
+4. **NEVER overwrite generated assets.** `unique_path` / `_rN` suffix. RD is paid.
+5. **RD balance is TRUTH** (not credits). Budget = `balance - 0.01`.
+6. **Pages cannot host a Durable Object.** Multiplayer = separate Worker (post-0.1).
+7. **Custom domain attach is 2 steps** (Pages domain API + proxied CNAME). DNS token
+   ≠ wrangler OAuth. Skill: `cloudflare-free-deploy` §9.
+8. **Create DNS first, probe second.** NXDOMAIN poison lasts 30 min. Skill:
+   `dns-propagation-debug`.
+9. **Never `immutable` on SPA assets.** Content-hash ≠ edge has the file yet.
+10. **`functions/` empty or half-wired will 404/intercept** — keep empty until used.
+11. **Porkbun is registrar only** for `heck.games`; DNS is on Cloudflare NS
+    (`elisa`/`ian`). Don’t edit Porkbun records expecting CF to see them.
+12. **Zone ID** `3d5c0405709f17ae19895d1eeb33dea1`, Account
+    `c4dba63a117f3500cebc9b091759bb16`. DNS-capable keychain service:
+    `cloudflare-darkscale-ops`.
+13. **Dialogue component** lives at `src/components/Dialogue.js` (Phaser port).
+    Legacy `js/dialogue.js` is the Alberdi-shaped original — don’t double-wire.
+14. **Sprite frame sizes:** player/dog `32×32` (sheet 160×128), boss `64×64`
+    (sheet 896×256), npc_vecino is a **256×256 turnaround** (crop, not sheet).
+
+---
+
+## Long-horizon plan (post-v0.1 → shippable barrio)
+
+> Goal: a short but *complete* walking story people finish in ~15 min on phone,
+> with real Córdoba history, then optional co-op.
+
+### Horizon A — Playable spine polish (1–2 days) ← **you are here**
+- [x] Domain live + deploy script hardened
+- [x] Boss proximity + ending trigger + single save key
+- [ ] Happy-path Playwright walk (no hooks for the critical path)
+- [ ] Auto-save on map exit + on boss win + on ending (already partial)
+- [ ] Title / continue screen if `hasSave()`
+- [ ] Mobile: confirm joystick + A button on real phone Safari
+- [ ] Visible controls hint on first boot (flechas / E / espacio / K)
+- [ ] Re-tag `v0.1.1` after happy-path green on custom domain
+
+### Horizon B — Art & audio pass (2–4 days, RD budget)
+- Real tilesets for isla / cerveceria / cancha (`rd_fast__game_asset` + environment)
+- Player staff-swing frames + hurt flash
+- don Tito idle (use cropped turnaround properly or re-fire top-down NPC)
+- Portraits for dialogue (Tito, Cervecero, Vecina)
+- Chiptune: town theme + battle sting via `scripts/gen_audio.py` (numpy, free)
+- **Gate:** `audit_sheets.py` green; no clobber; ledger balances updated
+
+### Horizon C — Story rewrite (after art baseline)
+- Replace STORY.md stub with full authored Argentine-Spanish script
+- Multi-branch Tito (history vs trouble) already scaffolded — deepen, don’t replace
+- Cervecero pre/post lines cite 1912/1917, Munich/Bock, 105-day 1998 toma, 2010 chimney
+- Cancha ending nods 2002 fusion Argentino Flores + 9 de Julio
+- Optional: one more NPC (muchacha) with a single color line — already on map
+- **Still no LLM dialogue in shipping build** (authored only)
+
+### Horizon D — Feel & juice
+- Camera nudge on staff hit; hit-stop 2 frames
+- Battle transition wipe (iris or bar-scroll)
+- HP numbers / floating damage in battle
+- Save icon blip; “partida guardada”
+- Pause menu: continuar / guardar / borrar partida
+
+### Horizon E — Multiplayer co-op explore (post-content)
+- Lift Alberdi `rooms-worker/` DO relay (engine-agnostic, ~1 day)
+- Host-authoritative positions + shared dialogue lock
+- **Separate Worker** bound from Pages via `/api/config` — never inside Pages
+- Free plan: SQLite DO + hibernation; no `setInterval`
+
+### Horizon F — Backend saves (only if cross-device demanded)
+- D1 quest flags + dialogue-seen (5M reads/day free)
+- Keep localStorage as offline cache; D1 is source of truth when authed
+- Don’t build auth until someone asks
+
+### Horizon G — Distribution
+- OG image 1200×630 from Playwright screenshot of Isla
+- `heck.games` hub card
+- Optional itch.io embed (same `dist/`)
+
+### Explicit non-goals (still)
+- Party members, jobs, equipment tiers, ATB, summons
+- More than ~1 turn fight until story rewrite needs it
+- Kaplay/editor migration
+- Shared save with Alberdi
+
+---
+
+## Commands cheat-sheet (next agent)
+
+```bash
+npm run dev              # :5173
+npm run build && npm run validate
+PV_VALIDATE_URL=https://paezville.pages.dev/ npm run validate
+npm run deploy           # build + stamp + wrangler + live validate
+python3 scripts/rd_keys.py balances
+python3 scripts/gen_sprites_rd.py --spec player --check-cost
+```
+
+Custom domain DNS panic button:
+```bash
+IP=$(dig +short heck.games @1.1.1.1 | head -1)
+curl -sS --resolve paezville.heck.games:443:$IP https://paezville.heck.games/ | head
+# Playwright: chromium.launch({ args: [`--host-resolver-rules=MAP paezville.heck.games ${IP}`] })
+```
+

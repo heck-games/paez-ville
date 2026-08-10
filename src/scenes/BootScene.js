@@ -1,41 +1,65 @@
 import Phaser from 'phaser';
 import { buildTilesetDataURI } from '../makeTileset.js';
 
+// Relative paths — Vite base is './', and absolute `/assets/...` breaks if the
+// game is ever served from a subpath. Keep every load path relative.
+const MAPS = {
+  isla: 'maps/isla.json',
+  cerveceria: 'maps/cerveceria.json',
+  cancha: 'maps/cancha.json',
+};
+
 export default class BootScene extends Phaser.Scene {
   constructor() {
     super('Boot');
   }
 
   preload() {
-    // The Tiled JSON map for "Isla de los Patos".
-    this.load.tilemapTiledJSON('isla', '/maps/isla.json');
-    this.load.tilemapTiledJSON('cerveceria', '/maps/cerveceria.json');
-    this.load.tilemapTiledJSON('cancha', '/maps/cancha.json');
+    // Loading bar (tiny GBA-style)
+    const w = 120;
+    const h = 8;
+    const x = (240 - w) / 2;
+    const y = 80;
+    const barBg = this.add.rectangle(120, y, w, h, 0x222233).setOrigin(0.5);
+    const bar = this.add.rectangle(x, y, 1, h, 0xffd73c).setOrigin(0, 0.5);
+    this.add
+      .text(120, y - 16, 'Páez Ville', {
+        fontFamily: 'monospace',
+        fontSize: '10px',
+        color: '#ffd73c',
+      })
+      .setOrigin(0.5);
+    this.load.on('progress', (p) => {
+      bar.width = Math.max(1, w * p);
+    });
 
-    // Phase 1 has no tile art yet: draw a tiny tileset on a canvas and
-    // load the resulting data URI as a normal image texture. The key
-    // ('isla_tileset') matches the tileset "name" referenced from the
-    // Tiled JSON via map.addTilesetImage() in WorldScene.
+    for (const [key, path] of Object.entries(MAPS)) {
+      this.load.tilemapTiledJSON(key, path);
+    }
+
+    // Procedural tileset (no PNG art yet). Key must match Tiled tileset name.
     this.load.image('isla_tileset', buildTilesetDataURI());
 
-    // Spritesheets (generated via RetroDiffusion, audited by audit_sheets.py)
-    this.load.spritesheet('player', '/assets/sprites/player.png', {
+    // RD spritesheets (audited). frame sizes match gen_sprites_rd specs.
+    this.load.spritesheet('player', 'assets/sprites/player.png', {
       frameWidth: 32,
       frameHeight: 32,
     });
-    this.load.spritesheet('trash_perro', '/assets/sprites/trash_perro.png', {
+    this.load.spritesheet('trash_perro', 'assets/sprites/trash_perro.png', {
       frameWidth: 32,
       frameHeight: 32,
     });
-    this.load.spritesheet('boss_cervezero', '/assets/sprites/boss_cervezero.png', {
+    this.load.spritesheet('boss_cervezero', 'assets/sprites/boss_cervezero.png', {
       frameWidth: 64,
       frameHeight: 64,
     });
-    this.load.image('npc_vecino', '/assets/sprites/npc_vecino.png');
+    this.load.image('npc_vecino', 'assets/sprites/npc_vecino.png');
+
+    // Silence unused
+    void barBg;
   }
 
   create() {
     this.scene.start('World');
   }
 }
-
