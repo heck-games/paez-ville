@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "validate": "node scripts/validate.mjs"
+    "validate": "node scripts/validate.mjs",
+    "deploy": "./scripts/deploy-cloudflare.sh"
   },
   "devDependencies": {
     "@playwright/test": "^1.48.0",
